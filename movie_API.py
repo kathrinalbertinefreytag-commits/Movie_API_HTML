@@ -25,34 +25,46 @@ def init_db(db_filename="movies.db"):#.db
     conn.commit()
     return conn
 
-def fetch_movie_from_omdb(film):
+def fetch_movie_from_omdb(title):
     url = "http://www.omdbapi.com/"
     params = {
         "apikey": api_key,
-        "t": film,
+        "t": title,
         "r": "json"
     }
-    resp = requests.get(url, params=params, timeout=5)
+
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.exceptions.RequestException as e:
+        print(f"Fehler beim Abrufen von OMDb: {e}")
     if resp.status_code != 200:
         return None
 
     data = resp.json()
     if data.get("Response") == "False":
-        return None  # Film nicht gefunden
-    # Beispiel: Daten aus OMDb
-    year = data.get("Year")
+        print(f"OMDb: Film '{title}' nicht gefunden")
+        return None
+
+    # Daten von OMDb
     imdb_rating = data.get("imdbRating")
     try:
-        year = int(year)
-    except (ValueError, TypeError):
-        year = None
-    try:
-        imdb_rating = float(imdb_rating)
+        imdb_rating = float(imdb_rating) if imdb_rating != "N/A" else None
     except (ValueError, TypeError):
         imdb_rating = None
-    return {"title": data.get("Title"),
-            "year": int(data.get("Year", 0)),
-            "rating": float(data.get("imdbRating")) if data.get("imdbRating") != "N/A" else None}
+
+    try:
+        year = int(data.get("Year", 0))
+    except (ValueError, TypeError):
+        year = None
+
+    return {
+        "title": data.get("Title"),
+        "year": year,
+        "rating": imdb_rating,
+        "poster": data.get("Poster", "")
+    }
 
 def add_movie_sql(conn, movie):
     cur = conn.cursor()

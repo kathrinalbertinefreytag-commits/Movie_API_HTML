@@ -6,7 +6,8 @@ import statistics
 # import matplotlib.pyplot as plt
 import movie_API
 import sqlite3
-
+import movie_storage_sql
+from movie_storage_sql import Movie, session
 
 # all functions for menu-selection
 def goodbye():
@@ -14,75 +15,72 @@ def goodbye():
     print("Bye!")
 
 
-"""def list_movie(movies):
-    #list of all movies
+def list_movies_from_db():
+    """Listet alle Filme aus der SQL-Datenbank über movie_storage_sql"""
+    movies = movie_storage_sql.list_movies()
+
     print(f"{len(movies)} movies in total:")
     for title, info in movies.items():
-        print(f"{title}: {info['rating']} ({info['year']})")"""
-
-def list_movies_from_db(db_filename="movies.db"):
-    """Listet alle Filme aus der Datenbank"""
-    conn = sqlite3.connect(db_filename)
-    cur = conn.cursor()
-    cur.execute("SELECT title, year, rating FROM movies")
-    rows = cur.fetchall()
-    conn.close()
-
-    print(f"{len(rows)} movies in total:")
-    for title, year, rating in rows:
+        year = info.get("year", "N/A")
+        rating = info.get("rating", "N/A")
         print(f"{title}: {rating} ({year})")
 
-def add_movie(movies):
-    """add a new movie (name, rating, year)"""
+def add_movie():
     title = input("Enter a movie title (or 'q' to quit): ")
     if title.lower() == "q":
         return
-    if title in movies:
-        print("Movie already exists.")
+
+    movie = movie_API.fetch_movie_from_omdb(title)
+    if not movie:
+        print(f"Movie '{title}' not found.")
         return
 
+    year = movie["year"]
+    rating = movie["rating"]
+    poster = movie.get("poster", "")
 
-    # connection to database
-    conn = movie_API.init_db("movies.db")
-
-    # gets movie from db
-    movie = movie_API.fetch_movie_from_omdb(film=title)
-    if movie is None:
-        print(f"Movie '{title}' not found in OMDb.")
-        return
-
-    # try to write film in SQL
     try:
-        movie_API.add_movie_sql(conn, movie)
-        print("Movie added!")
-    finally:
-        conn.close()
+        movie_storage_sql.add_movie(title, year, rating, poster)
+        print("Movie added to database!")
+    except Exception as e:
+        print(f"Error adding movie: {e}")
 
-def delete_movie(movies):
+
+
+def delete_movie():
     """delete a movie by name"""
-    film = input("Enter the movie to delete: ")
-    if film in movies:
-        del movies[film]
-        print(f"{film} has been deleted.")
-    else:
-        print("Movie not found.")
+    film = input("Enter the movie to delete: ").strip()
+    if not film:
+        print("You must enter a movie title.")
+        return
+
+    movie_storage_sql.delete_movie(title=film)
 
 
-def update_movie(movies):
+def update_movie():
     """actualize a movie (rating)"""
-    film = input("Enter the movie to update: ")
-    if film in movies:
-        new_rating = float(input("Enter the new rating: "))
-        movies[film]["rating"] = new_rating
-        print(f"{film} was updated to rating {new_rating}.")
-    else:
-        print("Movie not found.")
+    title = input("Enter movie title to update: ").strip()
+    if not title:
+        print("You must enter a movie title.")
+        return
+
+    try:
+        rating = float(input("Enter new rating: "))
+    except ValueError:
+        print("Rating must be a number.")
+        return
+
+    movie_storage_sql.update_movie(title, rating)
 
 
-def stats(movies):
+def stats():
     """overview of statistics"""
-    ratings = [info["rating"] for info in movies.values()]
+    movies = movie_storage_sql.list_movies()
+    if not movies:
+        print("No movies found in database.")
+        return
 
+    ratings = [info["rating"] for info in movies.values()]
     avg_rating = sum(ratings) / len(ratings)
     median_rating = statistics.median(ratings)
     max_rating = max(ratings)
@@ -97,8 +95,9 @@ def stats(movies):
     print(f"Worst movies: {', '.join(worst_movies)} ({min_rating})")
 
 
-def random_movie(movies):
+def random_movie():
     """select a film randomized"""
+    movies = movie_storage_sql.list_movies()
     film = random.choice(list(movies.keys()))
     info = movies[film]
     print(f"Random movie: {film} ({info['year']}), Rating: {info['rating']}")
@@ -106,35 +105,92 @@ def random_movie(movies):
 
 def search_movie(movies):
     """find if a movie is in the dictionary"""
-    search = input("Enter search term: ").lower()
+    search = input("Enter search term: ").lower().strip()
+    if not search:
+        print("You must enter a search term.")
+        return
+    movies = movie_storage_sql.list_movies()
     found = False
+
     for title, info in movies.items():
-        if search in title.lower():
+        if search.lower() in title.lower():
             print(f"{title}: {info['rating']} ({info['year']})")
             found = True
+
     if not found:
-        print("No matches found.")
+        print(f"Movie '{search}' not found in OMDb.")
+
 
 def sort_movies(movies):
     """list movies by rate descending"""
+    movies = movie_storage_sql.list_movies()
+    if not movies:
+        print("No movies found in database.")
+        return
+
     sorted_movies = sorted(movies.items(), key=lambda x: x[1]["rating"], reverse=True)
     print("Movies sorted by rating:")
     for title, info in sorted_movies:
         print(f"{title}: {info['rating']} ({info['year']})")
 
+def make_movie_grid(movies):
+    """Erstellt HTML für alle Filme inkl. Poster"""
+    html = ""
+    for title, info in movies.items():
+        poster = info.get("poster", "")  # Poster aus dem Dictionary
+        year = info.get("year", "N/A")
+        rating = info.get("rating", "N/A")
+        html += f"""
+        <li class="movie-item">
+            <img src="{poster}" alt="{title}" class="movie-poster">
+            <h3>{title}</h3>
+            <p>Rating: {rating} ({year})</p>
+        </li>
+        """
+    return html
+
+
 def generate_website():
-    """generate website"""
+    """Generate a website showing all movies with posters, year, and rating."""
 
-    data = { 'title': 'Masterschool MovieDB'}
-    with open("template.html", "r", encoding="utf-8") as f:
-        template = f.read()
+    movies = movie_storage_sql.list_movies()
 
-    html_output = template.format(**data)
+    if not movies:
+        print("No movies found in database.")
+        return
 
+    try:
+        with open("template.html", "r", encoding="utf-8") as f:
+            template = f.read()
+    except FileNotFoundError:
+        print("Template file 'template.html' not found.")
+        return
+
+    #creates html for all movies
+    grid_html = make_movie_grid(movies)
+    #creating html-list for all movies
+    movies_html = ""
+    for title, info in movies.items():
+        poster_url = info.get("poster_url", "")
+        movies_html += f"""
+        <li class="cards__item">
+            <div class="card__title">{title} ({info['year']})</div>
+            <img src="{poster_url}" alt="{title} Poster" width="200">
+            <p class="card__text">
+                <strong>Rating:</strong> {info['rating']}
+            </p>
+        </li>
+        """
+
+    # for variable in template:
+    html_output = template.replace("__TEMPLATE_MOVIE_GRID__", grid_html)
+
+    # writing into index
     with open("index.html", "w", encoding="utf-8") as f:
         f.write(html_output)
 
-    print("website was generated successfully.")
+    print("Website was generated successfully.")
+
 
 
 # at the moment not active because installation of matplotlib did not work properly
@@ -156,20 +212,6 @@ def generate_website():
 def main():
     """Shows menu, asks for choice, and performs actions."""
     print("***** My Movie Database *****")
-
-# data
-    movies = {
-        "The Shawshank Redemption": {"rating": 9.3, "year": 1994},
-        "Pulp Fiction": {"rating": 8.9, "year": 1994},
-        "The Room": {"rating": 3.7, "year": 2003},
-        "The Godfather": {"rating": 9.2, "year": 1972},
-        "The Godfather: Part II": {"rating": 9.0, "year": 1974},
-        "The Dark Knight": {"rating": 9.0, "year": 2008},
-        "12 Angry Men": {"rating": 9.0, "year": 1957},
-        "Everything Everywhere All At Once": {"rating": 8.0, "year": 2022},
-        "Forrest Gump": {"rating": 8.8, "year": 1994},
-        "Star Wars: Episode V – The Empire Strikes Back": {"rating": 8.7, "year": 1980}
-    }
 
 
     while True:
@@ -196,29 +238,29 @@ def main():
 
         if choice == "1":
             """list_movie(movies)"""
-            list_movies_from_db(db_filename="movies.db")
+            list_movies_from_db()
 
         elif choice == "2":
-            add_movie(movies)
+            add_movie()
 
         elif choice == "3":
-            delete_movie(movies)
+            delete_movie()
 
         elif choice == "4":
-            update_movie(movies)
+            update_movie()
 
         elif choice == "5":
-            stats(movies)
+            stats()
 
         elif choice == "6":
-            random_movie(movies)
+            random_movie()
 
         elif choice == "7":
-            search_movie(movies)
+            search_movie()
 
 
         elif choice == "8":
-            sort_movies(movies)
+            sort_movies()
 
 
         # elif choice == "9":
